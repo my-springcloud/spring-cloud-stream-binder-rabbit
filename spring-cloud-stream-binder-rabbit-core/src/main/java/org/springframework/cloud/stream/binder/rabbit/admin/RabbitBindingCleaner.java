@@ -61,12 +61,15 @@ public class RabbitBindingCleaner implements BindingCleaner {
 				entity, isJob);
 	}
 
-	private Map<String, List<String>> doClean(String adminUri, String user, String pw, String vhost,
-			String binderPrefix, String entity, boolean isJob) {
+
+	private Map<String, List<String>> doClean(String adminUri, String user, String pw, String vhost, String binderPrefix, String entity, boolean isJob) {
+		// 创建 RestTemplate
 		RestTemplate restTemplate = RabbitManagementUtils.buildRestTemplate(adminUri, user, pw);
+		// 获取RabbitMQ中的指定前缀的队列
 		List<String> removedQueues = isJob
 				? null
 				: findStreamQueues(adminUri, vhost, binderPrefix, entity, restTemplate);
+		// 获取RabbitMQ中的指定前缀的交换器
 		List<String> removedExchanges = findExchanges(adminUri, vhost, binderPrefix, entity, restTemplate);
 		// Delete the queues in reverse order to enable re-running after a partial success.
 		// The queue search above starts with 0 and terminates on a not found.
@@ -75,6 +78,7 @@ public class RabbitBindingCleaner implements BindingCleaner {
 			URI uri = UriComponentsBuilder.fromUriString(adminUri + "/api")
 					.pathSegment("queues", "{vhost}", "{stream}")
 					.buildAndExpand(vhost, queueName).encode().toUri();
+			// 删除RabbitMQ队列
 			restTemplate.delete(uri);
 			if (logger.isDebugEnabled()) {
 				logger.debug("deleted queue: " + queueName);
@@ -89,6 +93,7 @@ public class RabbitBindingCleaner implements BindingCleaner {
 			URI uri = UriComponentsBuilder.fromUriString(adminUri + "/api")
 					.pathSegment("exchanges", "{vhost}", "{name}")
 					.buildAndExpand(vhost, exchange).encode().toUri();
+			// 删除RabbitMQ交换器
 			restTemplate.delete(uri);
 			if (logger.isDebugEnabled()) {
 				logger.debug("deleted exchange: " + exchange);
@@ -100,8 +105,8 @@ public class RabbitBindingCleaner implements BindingCleaner {
 		return results;
 	}
 
-	private List<String> findStreamQueues(String adminUri, String vhost, String binderPrefix, String stream,
-			RestTemplate restTemplate) {
+	private List<String> findStreamQueues(String adminUri, String vhost, String binderPrefix, String stream, RestTemplate restTemplate) {
+
 		String queueNamePrefix = adjustPrefix(AbstractBinder.applyPrefix(binderPrefix, stream));
 		List<Map<String, Object>> queues = listAllQueues(adminUri, vhost, restTemplate);
 		List<String> removedQueues = new ArrayList<>();
@@ -115,6 +120,13 @@ public class RabbitBindingCleaner implements BindingCleaner {
 		return removedQueues;
 	}
 
+	/**
+	 * 获取RabbitMq所有的 Queue
+	 * @param adminUri
+	 * @param vhost
+	 * @param restTemplate
+	 * @return
+	 */
 	private List<Map<String, Object>> listAllQueues(String adminUri, String vhost, RestTemplate restTemplate) {
 		URI uri = UriComponentsBuilder.fromUriString(adminUri + "/api")
 				.pathSegment("queues", "{vhost}")

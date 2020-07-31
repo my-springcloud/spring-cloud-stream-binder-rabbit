@@ -95,13 +95,10 @@ import com.rabbitmq.client.Envelope;
  * @author Artem Bilan
  */
 public class RabbitMessageChannelBinder
-		extends AbstractMessageChannelBinder<ExtendedConsumerProperties<RabbitConsumerProperties>,
-		ExtendedProducerProperties<RabbitProducerProperties>, RabbitExchangeQueueProvisioner>
-		implements ExtendedPropertiesBinder<MessageChannel, RabbitConsumerProperties, RabbitProducerProperties>,
-		DisposableBean {
+		extends AbstractMessageChannelBinder<ExtendedConsumerProperties<RabbitConsumerProperties>, ExtendedProducerProperties<RabbitProducerProperties>, RabbitExchangeQueueProvisioner>
+		implements ExtendedPropertiesBinder<MessageChannel, RabbitConsumerProperties, RabbitProducerProperties>, DisposableBean {
 
-	private static final AmqpMessageHeaderErrorMessageStrategy errorMessageStrategy =
-			new AmqpMessageHeaderErrorMessageStrategy();
+	private static final AmqpMessageHeaderErrorMessageStrategy errorMessageStrategy = new AmqpMessageHeaderErrorMessageStrategy();
 
 	private static final MessagePropertiesConverter inboundMessagePropertiesConverter =
 			new DefaultMessagePropertiesConverter() {

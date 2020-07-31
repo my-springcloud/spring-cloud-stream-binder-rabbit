@@ -61,8 +61,8 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 		ProvisioningProvider<ExtendedConsumerProperties<RabbitConsumerProperties>,
 							ExtendedProducerProperties<RabbitProducerProperties>> {
 
-	private static final AnonymousQueue.Base64UrlNamingStrategy ANONYMOUS_GROUP_NAME_GENERATOR
-			= new AnonymousQueue.Base64UrlNamingStrategy("anonymous.");
+	// 匿名队列前缀
+	private static final AnonymousQueue.Base64UrlNamingStrategy ANONYMOUS_GROUP_NAME_GENERATOR = new AnonymousQueue.Base64UrlNamingStrategy("anonymous.");
 
 	/**
 	 * The delimiter between a group and index when constructing a binder
@@ -72,6 +72,7 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 
 	protected final Log logger = LogFactory.getLog(getClass());
 
+	// RabbitMQ 客户端
 	private final RabbitAdmin rabbitAdmin;
 
 	private boolean notOurAdminException;
@@ -85,28 +86,39 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 		this.rabbitAdmin.afterPropertiesSet();
 	}
 
+	/**
+	 * 发布消息的端点
+	 * @param name 端点名称
+	 * @param producerProperties 配置属性
+	 * @return
+	 */
 	@Override
-	public ProducerDestination provisionProducerDestination(String name,
-															ExtendedProducerProperties<RabbitProducerProperties> producerProperties) {
+	public ProducerDestination provisionProducerDestination(String name, ExtendedProducerProperties<RabbitProducerProperties> producerProperties) {
+		// 构建Exchange
 		final String exchangeName = applyPrefix(producerProperties.getExtension().getPrefix(), name);
 		Exchange exchange = buildExchange(producerProperties.getExtension(), exchangeName);
 		if (producerProperties.getExtension().isDeclareExchange()) {
+			// 创建Exchange
 			declareExchange(exchangeName, exchange);
 		}
 		Binding binding = null;
 		for (String requiredGroupName : producerProperties.getRequiredGroups()) {
-			String baseQueueName = producerProperties.getExtension().isQueueNameGroupOnly()
-					? requiredGroupName : (exchangeName + "." + requiredGroupName);
+			// 组装 QueueName
+			String baseQueueName = producerProperties.getExtension().isQueueNameGroupOnly() ? requiredGroupName : (exchangeName + "." + requiredGroupName);
 			if (!producerProperties.isPartitioned()) {
+				// 分区处理
 				Queue queue = new Queue(baseQueueName, true, false, false,
 						queueArgs(baseQueueName, producerProperties.getExtension(), false));
+				// 创建 Queue
 				declareQueue(baseQueueName, queue);
+				// 绑定死信队列
 				autoBindDLQ(baseQueueName, baseQueueName, producerProperties.getExtension());
 				if (producerProperties.getExtension().isBindQueue()) {
 					binding = notPartitionedBinding(exchange, queue, producerProperties.getExtension());
 				}
 			}
 			else {
+				// 分区处理
 				// if the stream is partitioned, create one queue for each target partition for the default group
 				for (int i = 0; i < producerProperties.getPartitionCount(); i++) {
 					String partitionSuffix = "-" + i;
@@ -127,18 +139,20 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 	}
 
 	@Override
-	public ConsumerDestination provisionConsumerDestination(String name, String group,
-			ExtendedConsumerProperties<RabbitConsumerProperties> properties) {
+	public ConsumerDestination provisionConsumerDestination(String name, String group, ExtendedConsumerProperties<RabbitConsumerProperties> properties) {
 		boolean anonymous = !StringUtils.hasText(group);
+		// 构建QueueName
 		String  baseQueueName = anonymous ? groupedName(name, ANONYMOUS_GROUP_NAME_GENERATOR.generateName())
 					: properties.getExtension().isQueueNameGroupOnly() ? group : groupedName(name, group);
 		if (this.logger.isInfoEnabled()) {
 			this.logger.info("declaring queue for inbound: " + baseQueueName + ", bound to: " + name);
 		}
 		String prefix = properties.getExtension().getPrefix();
+		// 构建ExchangeName
 		final String exchangeName = applyPrefix(prefix, name);
 		Exchange exchange = buildExchange(properties.getExtension(), exchangeName);
 		if (properties.getExtension().isDeclareExchange()) {
+			// 创建Exchange
 			declareExchange(exchangeName, exchange);
 		}
 		String queueName = applyPrefix(prefix, baseQueueName);
@@ -162,12 +176,15 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 						queueArgs(queueName, properties.getExtension(), false));
 			}
 		}
+		// 创建队列
 		declareQueue(queueName, queue);
 		Binding binding = null;
 		if (properties.getExtension().isBindQueue()) {
+			// 将队列和交换器绑定
 			binding = declareConsumerBindings(name, properties, exchange, partitioned, queue);
 		}
 		if (durable) {
+			// 绑定死信队列
 			autoBindDLQ(applyPrefix(properties.getExtension().getPrefix(), baseQueueName), queueName,
 					properties.getExtension());
 		}
@@ -225,14 +242,14 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 	}
 
 	private Binding notPartitionedBinding(Exchange exchange, Queue queue, RabbitCommonProperties extendedProperties) {
+
 		String routingKey = extendedProperties.getBindingRoutingKey();
 		if (routingKey == null) {
 			routingKey = "#";
 		}
 		if (exchange instanceof TopicExchange) {
-			Binding binding = BindingBuilder.bind(queue)
-					.to((TopicExchange) exchange)
-					.with(routingKey);
+			// 将队列绑定到交换器
+			Binding binding = BindingBuilder.bind(queue).to((TopicExchange) exchange).with(routingKey);
 			declareBinding(queue.getName(), binding);
 			return binding;
 		}
@@ -267,6 +284,7 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 			this.logger.debug("autoBindDLQ=" + autoBindDlq
 					+ " for: " + baseQueueName);
 		}
+		// 1. 绑定死信队列
 		if (autoBindDlq) {
 			String dlqName;
 			if (properties.getDeadLetterQueueName() == null) {
@@ -276,9 +294,11 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 				dlqName = properties.getDeadLetterQueueName();
 			}
 			Queue dlq = new Queue(dlqName, true, false, false, queueArgs(dlqName, properties, true));
+			// 1.1 创建死信队列
 			declareQueue(dlqName, dlq);
 			String dlxName = deadLetterExchangeName(properties);
 			final DirectExchange dlx = new DirectExchange(dlxName);
+			// 1.2 创建死信交换器
 			declareExchange(dlxName, dlx);
 			BindingBuilder.DirectExchangeRoutingKeyConfigurer bindingBuilder = BindingBuilder.bind(dlq).to(dlx);
 			Binding dlqBinding;
@@ -288,9 +308,9 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 			else {
 				dlqBinding = bindingBuilder.with(properties.getDeadLetterRoutingKey());
 			}
+			// 1.3 将死信队列绑定到死信交换器
 			declareBinding(dlqName, dlqBinding);
-			if (properties instanceof RabbitConsumerProperties &&
-					((RabbitConsumerProperties) properties).isRepublishToDlq()) {
+			if (properties instanceof RabbitConsumerProperties && ((RabbitConsumerProperties) properties).isRepublishToDlq()) {
 				/*
 				 *  Also bind with the base queue name when republishToDlq is used, which does not know about
 				 * partitioning
@@ -500,10 +520,11 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 		this.notOurAdminException = true; // our admin doesn't have an event publisher
 	}
 
+	// 生产者端点
 	private static final class RabbitProducerDestination implements ProducerDestination {
-
+		// 交换器
 		private final Exchange exchange;
-
+		// 队列和Exchange的绑定
 		private final Binding binding;
 
 		RabbitProducerDestination(Exchange exchange, Binding binding) {
@@ -532,8 +553,9 @@ public class RabbitExchangeQueueProvisioner implements ApplicationListener<Decla
 	}
 
 	private static final class RabbitConsumerDestination implements ConsumerDestination {
-
+		// 队列
 		private final Queue queue;
+		// 队列和Exchange的绑定
 		private final Binding binding;
 
 		RabbitConsumerDestination(Queue queue, Binding binding) {

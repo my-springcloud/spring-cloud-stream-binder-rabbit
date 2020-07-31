@@ -44,6 +44,13 @@ import org.springframework.web.client.RestTemplate;
  */
 public abstract class RabbitManagementUtils {
 
+	/**
+	 * 构建 RestTemplate
+	 * @param adminUri
+	 * @param user
+	 * @param password
+	 * @return
+	 */
 	public static RestTemplate buildRestTemplate(String adminUri, String user, String password) {
 		BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
 		credsProvider.setCredentials(
