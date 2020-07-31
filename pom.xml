@@ -2,16 +2,16 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<artifactId>spring-cloud-stream-binder-rabbit-parent</artifactId>
-	<version>3.0.0.BUILD-SNAPSHOT</version>
+	<version>3.1.0-SNAPSHOT</version>
 	<packaging>pom</packaging>
 	<parent>
 		<groupId>org.springframework.cloud</groupId>
 		<artifactId>spring-cloud-build</artifactId>
-		<version>2.2.0.BUILD-SNAPSHOT</version>
+		<version>3.0.0-SNAPSHOT</version>
 		<relativePath />
 	</parent>
 	<properties>
-		<spring-cloud-stream.version>3.0.0.BUILD-SNAPSHOT</spring-cloud-stream.version>
+		<spring-cloud-stream.version>3.1.0-SNAPSHOT</spring-cloud-stream.version>
 		<java.version>1.8</java.version>
 		<maven-checkstyle-plugin.failsOnError>true</maven-checkstyle-plugin.failsOnError>
         <maven-checkstyle-plugin.failsOnViolation>true
@@ -19,6 +19,13 @@
         <maven-checkstyle-plugin.includeTestSourceDirectory>true
         </maven-checkstyle-plugin.includeTestSourceDirectory>
 	</properties>
+	<modules>
+		<module>spring-cloud-stream-binder-rabbit-core</module>
+		<module>spring-cloud-stream-binder-rabbit</module>
+		<module>spring-cloud-starter-stream-rabbit</module>
+		<module>spring-cloud-stream-binder-rabbit-test-support</module>
+		<module>docs</module>
+	</modules>
 	<dependencyManagement>
 		<dependencies>
 			<dependency>
@@ -51,13 +58,13 @@
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
-	<modules>
-		<module>spring-cloud-stream-binder-rabbit-core</module>
-		<module>spring-cloud-stream-binder-rabbit</module>
-		<module>spring-cloud-starter-stream-rabbit</module>
-		<module>spring-cloud-stream-binder-rabbit-test-support</module>
-		<module>docs</module>
-	</modules>
+	<dependencies>
+		<dependency>
+			<groupId>org.junit.vintage</groupId>
+			<artifactId>junit-vintage-engine</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
 	<build>
 		<pluginManagement>
 			<plugins>
@@ -170,4 +177,38 @@
 			</pluginRepositories>
 		</profile>
 	</profiles>
+	<repositories>
+			<repository>
+				<id>spring-snapshots</id>
+				<name>Spring Snapshots</name>
+				<url>https://repo.spring.io/libs-snapshot-local</url>
+			</repository>
+			<repository>
+				<id>spring-milestones</id>
+				<name>Spring Milestones</name>
+				<url>https://repo.spring.io/libs-milestone-local</url>
+			</repository>
+			<repository>
+				<id>spring-releases</id>
+				<name>Spring Releases</name>
+				<url>https://repo.spring.io/release</url>
+			</repository>
+		</repositories>
+		<pluginRepositories>
+			<pluginRepository>
+				<id>spring-snapshots</id>
+				<name>Spring Snapshots</name>
+				<url>https://repo.spring.io/libs-snapshot-local</url>
+			</pluginRepository>
+			<pluginRepository>
+				<id>spring-milestones</id>
+				<name>Spring Milestones</name>
+				<url>https://repo.spring.io/libs-milestone-local</url>
+			</pluginRepository>
+			<pluginRepository>
+				<id>spring-releases</id>
+				<name>Spring Releases</name>
+				<url>https://repo.spring.io/libs-release-local</url>
+			</pluginRepository>
+		</pluginRepositories>
 </project>

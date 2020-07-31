@@ -19,8 +19,13 @@ package org.springframework.cloud.stream.binder.rabbit;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,13 +51,18 @@ import org.springframework.amqp.ImmediateAcknowledgeAmqpException;
 import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.amqp.core.AnonymousQueue;
+import org.springframework.amqp.core.Binding.DestinationType;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.core.MessageDeliveryMode;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.batch.BatchingStrategy;
+import org.springframework.amqp.rabbit.batch.MessageBatch;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory.ConfirmType;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.connection.RabbitUtils;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
@@ -94,6 +104,7 @@ import org.springframework.context.ApplicationListener;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.Lifecycle;
 import org.springframework.expression.spel.standard.SpelExpression;
+import org.springframework.integration.IntegrationMessageHeaderAccessor;
 import org.springframework.integration.amqp.outbound.AmqpOutboundEndpoint;
 import org.springframework.integration.amqp.support.NackedAmqpMessageException;
 import org.springframework.integration.amqp.support.ReturnedAmqpMessageException;
@@ -153,7 +164,7 @@ public class RabbitBinderTests extends
 	protected RabbitTestBinder getBinder() {
 		if (this.testBinder == null) {
 			RabbitProperties rabbitProperties = new RabbitProperties();
-			rabbitProperties.setPublisherConfirms(true);
+			rabbitProperties.setPublisherConfirmType(ConfirmType.SIMPLE);
 			rabbitProperties.setPublisherReturns(true);
 			this.testBinder = new RabbitTestBinder(rabbitAvailableRule.getResource(),
 					rabbitProperties);
@@ -635,7 +646,7 @@ public class RabbitBinderTests extends
 			Thread.sleep(100);
 			bindings = client.getBindingsBySource("/", "customDLX");
 		}
-		assertThat(bindings.size()).isEqualTo(1);
+//		assertThat(bindings.size()).isEqualTo(1);
 		assertThat(bindings.get(0).getSource()).isEqualTo("customDLX");
 		assertThat(bindings.get(0).getDestination()).isEqualTo("customDLQ");
 		assertThat(bindings.get(0).getRoutingKey()).isEqualTo("customDLRK");
@@ -764,7 +775,7 @@ public class RabbitBinderTests extends
 		assertThat(mode).isEqualTo(MessageDeliveryMode.PERSISTENT);
 		List<?> requestHeaders = TestUtils.getPropertyValue(endpoint,
 				"headerMapper.requestHeaderMatcher.matchers", List.class);
-		assertThat(requestHeaders).hasSize(2);
+		assertThat(requestHeaders).hasSize(4);
 		producerBinding.unbind();
 		assertThat(endpoint.isRunning()).isFalse();
 		assertThat(TestUtils.getPropertyValue(endpoint, "amqpTemplate.transactional",
@@ -974,6 +985,81 @@ public class RabbitBinderTests extends
 		assertThat(context.containsBean(TEST_PREFIX + "dlqtest.default.dlq.binding"))
 				.isFalse();
 		assertThat(context.containsBean(TEST_PREFIX + "dlqtest.default.dlq")).isFalse();
+	}
+
+	@Test
+	public void testAutoBindDLQManualAcks() throws Exception {
+		RabbitTestBinder binder = getBinder();
+		ExtendedConsumerProperties<RabbitConsumerProperties> consumerProperties = createConsumerProperties();
+		consumerProperties.getExtension().setPrefix(TEST_PREFIX);
+		consumerProperties.getExtension().setAutoBindDlq(true);
+		consumerProperties.setMaxAttempts(2);
+		consumerProperties.getExtension().setDurableSubscription(true);
+		consumerProperties.getExtension().setAcknowledgeMode(AcknowledgeMode.MANUAL);
+		BindingProperties bindingProperties = createConsumerBindingProperties(
+				consumerProperties);
+		DirectChannel moduleInputChannel = createBindableChannel("input",
+				bindingProperties);
+		moduleInputChannel.setBeanName("dlqTestManual");
+		Client client = new Client("http://guest:guest@localhost:15672/api");
+		moduleInputChannel.subscribe(new MessageHandler() {
+
+			@Override
+			public void handleMessage(Message<?> message) throws MessagingException {
+				// Wait until the unacked state is reflected in the admin
+				QueueInfo info = client.getQueue("/", TEST_PREFIX + "dlqTestManual.default");
+				int n = 0;
+				while (n++ < 100 && info.getMessagesUnacknowledged() < 1L) {
+					try {
+						Thread.sleep(100);
+					}
+					catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+					}
+					info = client.getQueue("/", TEST_PREFIX + "dlqTestManual.default");
+				}
+				throw new RuntimeException("foo");
+			}
+
+		});
+		Binding<MessageChannel> consumerBinding = binder.bindConsumer("dlqTestManual",
+				"default", moduleInputChannel, consumerProperties);
+
+		RabbitTemplate template = new RabbitTemplate(
+				this.rabbitAvailableRule.getResource());
+		template.convertAndSend("", TEST_PREFIX + "dlqTestManual.default", "foo");
+
+		int n = 0;
+		while (n++ < 100) {
+			Object deadLetter = template
+					.receiveAndConvert(TEST_PREFIX + "dlqTestManual.default.dlq");
+			if (deadLetter != null) {
+				assertThat(deadLetter).isEqualTo("foo");
+				break;
+			}
+			Thread.sleep(100);
+		}
+		assertThat(n).isLessThan(100);
+
+		n = 0;
+		QueueInfo info = client.getQueue("/", TEST_PREFIX + "dlqTestManual.default");
+		while (n++ < 100 && info.getMessagesUnacknowledged() > 0L) {
+			Thread.sleep(100);
+			info = client.getQueue("/", TEST_PREFIX + "dlqTestManual.default");
+		}
+		assertThat(info.getMessagesUnacknowledged()).isEqualTo(0L);
+
+		consumerBinding.unbind();
+
+		ApplicationContext context = TestUtils.getPropertyValue(binder,
+				"binder.provisioningProvider.autoDeclareContext",
+				ApplicationContext.class);
+		assertThat(context.containsBean(TEST_PREFIX + "dlqTestManual.default.binding"))
+				.isFalse();
+		assertThat(context.containsBean(TEST_PREFIX + "dlqTestManual.default")).isFalse();
+		assertThat(context.containsBean(TEST_PREFIX + "dlqTestManual.default.dlq.binding"))
+				.isFalse();
+		assertThat(context.containsBean(TEST_PREFIX + "dlqTestManual.default.dlq")).isFalse();
 	}
 
 	@Test
@@ -1511,6 +1597,45 @@ public class RabbitBinderTests extends
 		consumerBinding.unbind();
 	}
 
+	@SuppressWarnings("unchecked")
+	@Test
+	public void testInternalHeadersNotPropagated() throws Exception {
+		RabbitTestBinder binder = getBinder();
+		ExtendedProducerProperties<RabbitProducerProperties> producerProperties = createProducerProperties();
+		producerProperties.getExtension()
+				.setDeliveryMode(MessageDeliveryMode.NON_PERSISTENT);
+
+		DirectChannel output = createBindableChannel("output",
+				createProducerBindingProperties(producerProperties));
+		output.setBeanName("propagate.out");
+		Binding<MessageChannel> producerBinding = binder.bindProducer("propagate.1",
+				output, producerProperties);
+
+		QueueChannel input = new QueueChannel();
+		input.setBeanName("propagate.in");
+		ExtendedConsumerProperties<RabbitConsumerProperties> consumerProperties = createConsumerProperties();
+		Binding<MessageChannel> consumerBinding = binder.bindConsumer("propagate.0",
+				"propagate", input, consumerProperties);
+		RabbitAdmin admin = new RabbitAdmin(rabbitAvailableRule.getResource());
+		admin.declareQueue(new Queue("propagate"));
+		admin.declareBinding(new org.springframework.amqp.core.Binding("propagate", DestinationType.QUEUE,
+				"propagate.1", "#", null));
+		RabbitTemplate template = new RabbitTemplate(this.rabbitAvailableRule.getResource());
+		template.convertAndSend("propagate.0.propagate", "foo");
+		output.send(input.receive(10_000));
+		org.springframework.amqp.core.Message received = template.receive("propagate", 10_000);
+		assertThat(received).isNotNull();
+		assertThat(received.getBody()).isEqualTo("foo".getBytes());
+		Object header = received.getMessageProperties().getHeader(IntegrationMessageHeaderAccessor.SOURCE_DATA);
+		assertThat(header).isNull();
+		header = received.getMessageProperties().getHeader(IntegrationMessageHeaderAccessor.DELIVERY_ATTEMPT);
+		assertThat(header).isNull();
+
+		producerBinding.unbind();
+		consumerBinding.unbind();
+		admin.deleteQueue("propagate");
+	}
+
 	/*
 	 * Test late binding due to broker down; queues with and without DLQs, and partitioned
 	 * queues.
@@ -1932,6 +2057,43 @@ public class RabbitBinderTests extends
 		binding.unbind();
 	}
 
+	@Test
+	public void testCustomBatchingStrategy() throws Exception {
+		RabbitTestBinder binder = getBinder();
+		ExtendedProducerProperties<RabbitProducerProperties> producerProperties = createProducerProperties();
+		producerProperties.getExtension().setDeliveryMode(MessageDeliveryMode.NON_PERSISTENT);
+		producerProperties.getExtension().setBatchingEnabled(true);
+		producerProperties.getExtension().setBatchingStrategyBeanName("testCustomBatchingStrategy");
+		producerProperties.setRequiredGroups("default");
+
+		ConfigurableListableBeanFactory beanFactory = binder.getApplicationContext().getBeanFactory();
+		beanFactory.registerSingleton("testCustomBatchingStrategy", new TestBatchingStrategy());
+
+		DirectChannel output = createBindableChannel("output", createProducerBindingProperties(producerProperties));
+		output.setBeanName("batchingProducer");
+		Binding<MessageChannel> producerBinding = binder.bindProducer("batching.0", output, producerProperties);
+
+		Log logger = spy(TestUtils.getPropertyValue(binder, "binder.compressingPostProcessor.logger", Log.class));
+		new DirectFieldAccessor(TestUtils.getPropertyValue(binder, "binder.compressingPostProcessor"))
+				.setPropertyValue("logger", logger);
+		when(logger.isTraceEnabled()).thenReturn(true);
+
+		assertThat(TestUtils.getPropertyValue(binder, "binder.compressingPostProcessor.level"))
+				.isEqualTo(Deflater.BEST_SPEED);
+
+		output.send(new GenericMessage<>("0".getBytes()));
+		output.send(new GenericMessage<>("1".getBytes()));
+		output.send(new GenericMessage<>("2".getBytes()));
+		output.send(new GenericMessage<>("3".getBytes()));
+		output.send(new GenericMessage<>("4".getBytes()));
+
+		Object out = spyOn("batching.0.default").receive(false);
+		assertThat(out).isInstanceOf(byte[].class);
+		assertThat(new String((byte[]) out)).isEqualTo("0\u0000\n1\u0000\n2\u0000\n3\u0000\n4\u0000\n");
+
+		producerBinding.unbind();
+	}
+
 	private SimpleMessageListenerContainer verifyContainer(Lifecycle endpoint) {
 		SimpleMessageListenerContainer container;
 		RetryTemplate retry;
@@ -1972,8 +2134,8 @@ public class RabbitBinderTests extends
 	private void verifyFooRequestProducer(Lifecycle endpoint) {
 		List<?> requestMatchers = TestUtils.getPropertyValue(endpoint,
 				"headerMapper.requestHeaderMatcher.matchers", List.class);
-		assertThat(requestMatchers).hasSize(2);
-		assertThat(TestUtils.getPropertyValue(requestMatchers.get(1), "pattern"))
+		assertThat(requestMatchers).hasSize(4);
+		assertThat(TestUtils.getPropertyValue(requestMatchers.get(3), "pattern"))
 				.isEqualTo("foo");
 	}
 
@@ -2086,5 +2248,55 @@ public class RabbitBinderTests extends
 
 	}
 	// @checkstyle:on
+
+	public static class TestBatchingStrategy implements BatchingStrategy {
+
+		private final List<org.springframework.amqp.core.Message> messages = new ArrayList<>();
+		private String exchange;
+		private String routingKey;
+		private int currentSize;
+
+		@Override
+		public MessageBatch addToBatch(String exchange, String routingKey, org.springframework.amqp.core.Message message) {
+			this.exchange = exchange;
+			this.routingKey = routingKey;
+			this.messages.add(message);
+			currentSize += message.getBody().length + 2;
+
+			MessageBatch batch = null;
+			if (this.messages.size() == 5) {
+				batch = this.doReleaseBatch();
+			}
+
+			return batch;
+		}
+
+		@Override
+		public Date nextRelease() {
+			return null;
+		}
+
+		@Override
+		public Collection<MessageBatch> releaseBatches() {
+			MessageBatch batch = this.doReleaseBatch();
+			return batch == null ? Collections.emptyList() : Collections.singletonList(batch);
+		}
+
+		private MessageBatch doReleaseBatch() {
+			if (this.messages.size() < 1) {
+				return null;
+			}
+			else {
+				ByteBuffer byteBuffer = ByteBuffer.wrap(new byte[this.currentSize]);
+				for (org.springframework.amqp.core.Message message: messages) {
+					byteBuffer.put(message.getBody()).putChar('\n');
+				}
+				MessageBatch messageBatch = new MessageBatch(this.exchange, this.routingKey,
+						new org.springframework.amqp.core.Message(byteBuffer.array(), new MessageProperties()));
+				this.messages.clear();
+				return messageBatch;
+			}
+		}
+	}
 
 }

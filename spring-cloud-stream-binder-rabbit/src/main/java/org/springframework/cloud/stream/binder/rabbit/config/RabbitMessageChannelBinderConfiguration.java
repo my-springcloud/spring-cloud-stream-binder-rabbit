@@ -16,8 +16,10 @@
 
 package org.springframework.cloud.stream.binder.rabbit.config;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.springframework.amqp.core.DeclarableCustomizer;
 import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -35,12 +37,14 @@ import org.springframework.cloud.stream.binder.rabbit.RabbitMessageChannelBinder
 import org.springframework.cloud.stream.binder.rabbit.properties.RabbitBinderConfigurationProperties;
 import org.springframework.cloud.stream.binder.rabbit.properties.RabbitExtendedBindingProperties;
 import org.springframework.cloud.stream.binder.rabbit.provisioning.RabbitExchangeQueueProvisioner;
+import org.springframework.cloud.stream.config.ConsumerEndpointCustomizer;
 import org.springframework.cloud.stream.config.ListenerContainerCustomizer;
 import org.springframework.cloud.stream.config.MessageSourceCustomizer;
 import org.springframework.cloud.stream.config.ProducerMessageHandlerCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.integration.amqp.inbound.AmqpInboundChannelAdapter;
 import org.springframework.integration.amqp.inbound.AmqpMessageSource;
 import org.springframework.integration.amqp.outbound.AmqpOutboundEndpoint;
 import org.springframework.lang.Nullable;
@@ -76,11 +80,13 @@ public class RabbitMessageChannelBinderConfiguration {
 	RabbitMessageChannelBinder rabbitMessageChannelBinder(
 			@Nullable ListenerContainerCustomizer<AbstractMessageListenerContainer> listenerContainerCustomizer,
 			@Nullable MessageSourceCustomizer<AmqpMessageSource> sourceCustomizer,
-			@Nullable ProducerMessageHandlerCustomizer<AmqpOutboundEndpoint> producerMessageHandlerCustomizer) {
+			@Nullable ProducerMessageHandlerCustomizer<AmqpOutboundEndpoint> producerMessageHandlerCustomizer,
+			@Nullable ConsumerEndpointCustomizer<AmqpInboundChannelAdapter> consumerCustomizer,
+			List<DeclarableCustomizer> declarableCustomizers) {
 
 		RabbitMessageChannelBinder binder = new RabbitMessageChannelBinder(
 				this.rabbitConnectionFactory, this.rabbitProperties,
-				provisioningProvider(), listenerContainerCustomizer, sourceCustomizer);
+				provisioningProvider(declarableCustomizers), listenerContainerCustomizer, sourceCustomizer);
 		binder.setAdminAddresses(
 				this.rabbitBinderConfigurationProperties.getAdminAddresses());
 		binder.setCompressingPostProcessor(gZipPostProcessor());
@@ -88,6 +94,7 @@ public class RabbitMessageChannelBinderConfiguration {
 		binder.setNodes(this.rabbitBinderConfigurationProperties.getNodes());
 		binder.setExtendedBindingProperties(this.rabbitExtendedBindingProperties);
 		binder.setProducerMessageHandlerCustomizer(producerMessageHandlerCustomizer);
+		binder.setConsumerEndpointCustomizer(consumerCustomizer);
 		return binder;
 	}
 
@@ -105,8 +112,8 @@ public class RabbitMessageChannelBinderConfiguration {
 	}
 
 	@Bean
-	RabbitExchangeQueueProvisioner provisioningProvider() {
-		return new RabbitExchangeQueueProvisioner(this.rabbitConnectionFactory);
+	RabbitExchangeQueueProvisioner provisioningProvider(List<DeclarableCustomizer> customizers) {
+		return new RabbitExchangeQueueProvisioner(this.rabbitConnectionFactory, customizers);
 	}
 
 	@Bean
